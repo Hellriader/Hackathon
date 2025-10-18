@@ -1,24 +1,36 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import { Stack } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
-import 'react-native-reanimated';
-
-import { useColorScheme } from '@/hooks/use-color-scheme';
-
-export const unstable_settings = {
-  anchor: '(tabs)',
-};
+import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { Tabs } from "expo-router";
 
 export default function RootLayout() {
-  const colorScheme = useColorScheme();
+  return ( 
 
-  return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
-      </Stack>
-      <StatusBar style="auto" />
-    </ThemeProvider>
-  );
+<Tabs 
+
+ screenOptions={{ headerShown: false, tabBarActiveTintColor: '#e9791eff',}}
+
+>  
+    
+       
+   <Tabs.Screen name="index" options={{ tabBarLabel: "Home", 
+    tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="home" color={color} size={size} /> }} />
+
+   <Tabs.Screen name="Search" options={{ tabBarLabel: "Search", 
+    tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="magnify" color={color} size={size} />
+   }} /> 
+
+   <Tabs.Screen name="Grocerylist" options={{ tabBarLabel: "Grocery List",
+    tabBarBadge: 3,
+    tabBarBadgeStyle: { backgroundColor: 'green' },
+    tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="format-list-bulleted" color={color} size={size} />
+   }} />
+
+    <Tabs.Screen name="AI" options={{ tabBarLabel: "AI", 
+    tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="robot" color={color} size={size} />
+   }} />
+
+</Tabs>
+
+);
+
 }
+
