@@ -21,7 +21,7 @@ const PORT = process.env.PORT || 5001;
 async function initDB() {
   try {
     await sql`
-          CREATE TABLE IF NOT EXISTS products(
+          CREATE TABLE IF NOT EXISTS pricesmart(
             id SERIAL PRIMARY KEY,
             name VARCHAR(100) NOT NULL,
             type VARCHAR(100) NOT NULL,
