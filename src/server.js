@@ -34,6 +34,8 @@ async function initDB() {
             on_deal BOOLEAN DEFAULT FALSE,
             old_price DECIMAL(10, 2),
             image_url TEXT
+            url TEXT
+
         )`;
     console.log("Database initialized successfully");
   } catch (error) {
