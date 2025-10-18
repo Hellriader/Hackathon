@@ -33,7 +33,7 @@ async function initDB() {
             created_at DATE NOT NULL DEFAULT CURRENT_DATE,
             on_deal BOOLEAN DEFAULT FALSE,
             old_price DECIMAL(10, 2),
-            image_url TEXT
+            image_url TEXT,
             url TEXT
 
         )`;
