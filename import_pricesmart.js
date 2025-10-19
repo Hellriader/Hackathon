@@ -1,4 +1,3 @@
-// import_pricesmart.js
 import fs from "fs";
 import path from "path";
 import dotenv from "dotenv";
@@ -15,7 +14,13 @@ if (!CONN) {
 }
 
 const sql = neon(CONN);
-const FILE = path.resolve(process.cwd(), "pricesmart-groceries.json");
+const FILE = path.resolve(process.cwd(), "gibbo-products.json");
+
+// Tunables
+const NAME_CHUNK_SIZE = 500; // how many names to ask the DB about per SELECT
+const INSERT_BATCH_SIZE = 100; // how many rows we attempt before logging progress
+const MAX_RETRIES = 4;
+const RETRY_BASE_MS = 300; // base backoff
 
 function parsePrice(priceText) {
   if (!priceText) return null;
@@ -28,17 +33,41 @@ function parsePrice(priceText) {
   return Number(num.toFixed(2));
 }
 
+function chunkArray(arr, size) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+async function retryAsync(fn, retries = MAX_RETRIES, baseMs = RETRY_BASE_MS) {
+  let attempt = 0;
+  while (true) {
+    try {
+      return await fn();
+    } catch (err) {
+      attempt++;
+      if (attempt > retries) throw err;
+      const wait = baseMs * Math.pow(2, attempt - 1);
+      console.warn(
+        `Attempt ${attempt} failed — retrying after ${wait}ms:`,
+        err.message || err
+      );
+      await new Promise((r) => setTimeout(r, wait));
+    }
+  }
+}
+
 async function runImport() {
   if (!fs.existsSync(FILE)) {
     console.error("JSON file not found at", FILE);
     process.exit(1);
   }
 
-  let items;
+  let rawItems;
   try {
     const raw = fs.readFileSync(FILE, "utf8");
-    items = JSON.parse(raw);
-    if (!Array.isArray(items)) {
+    rawItems = JSON.parse(raw);
+    if (!Array.isArray(rawItems)) {
       console.error("JSON must be an array of objects.");
       process.exit(1);
     }
@@ -47,49 +76,111 @@ async function runImport() {
     process.exit(1);
   }
 
-  console.log(`Importing ${items.length} items...`);
+  // Normalize & dedupe input by name (keeps first occurrence)
+  const byName = new Map();
+  for (const item of rawItems) {
+    const name = (item.name || "").toString().trim();
+    if (!name) continue; // skip nameless here; we'll warn later
+    if (!byName.has(name)) byName.set(name, item);
+  }
 
-  let processed = 0;
+  const items = Array.from(byName.values());
+
+  console.log(
+    `Prepared ${items.length} unique-named items from input (original: ${rawItems.length})`
+  );
+
+  // collect names to check what already exists
+  const allNames = items.map((it) => it.name.trim());
+
+  const existingNames = new Set();
+
+  const nameChunks = chunkArray(allNames, NAME_CHUNK_SIZE);
+
   try {
-    // Note: no tx.begin — just run each parameterized query with sql`...`
-    for (const item of items) {
-      const name = item.name ?? null;
-      const priceNumeric = parsePrice(item.price); // number or null
-      const url = item.url ?? null;
-      const image_url = item.image ?? null;
-
-      if (!name || !url) {
-        console.warn("Skipping item missing name or url:", item);
-        continue;
+    for (const chunk of nameChunks) {
+      // Query DB for any names in this chunk. Wrap in retry to mitigate flaky network.
+      const rows = await retryAsync(
+        () => sql`SELECT name FROM gibbo WHERE name = ANY(${chunk})`
+      );
+      for (const r of rows) {
+        if (r && r.name) existingNames.add(r.name);
       }
+    }
+  } catch (err) {
+    console.error(
+      "Failed to query existing names from DB:",
+      err.message || err
+    );
+    process.exit(1);
+  }
 
-      // Upsert by url. Ensure you ran the ALTER TABLE / index SQL once:
-      // ALTER TABLE products ADD COLUMN IF NOT EXISTS url text;
-      // CREATE UNIQUE INDEX IF NOT EXISTS uniq_products_url ON products(url);
-      await sql`
-        INSERT INTO pricesmart
-          (name, type, category, price, description, store, parish, on_deal, old_price, image_url, url, created_at)
-        VALUES
-          (${name}, ${"grocery"}, ${"uncategorized"}, ${priceNumeric}, ${null}, ${"PriceSmart"}, ${null}, ${false}, ${null}, ${image_url}, ${url}, CURRENT_DATE)
-        ON CONFLICT (url)
-        DO UPDATE SET
-          name = EXCLUDED.name,
-          price = EXCLUDED.price,
-          image_url = EXCLUDED.image_url,
-          store = EXCLUDED.store,
-          category = EXCLUDED.category,
-          created_at = EXCLUDED.created_at;
-      `;
+  console.log(
+    `Found ${existingNames.size} items already in DB — they will be skipped.`
+  );
 
-      processed++;
-      // optional small throttle for very large imports:
-      // if (processed % 200 === 0) await new Promise(r => setTimeout(r, 50));
+  // Build list of items to insert
+  const toInsert = [];
+  const skippedMissing = [];
+  for (const item of items) {
+    const name = item.name ? item.name.toString().trim() : null;
+    const link = item.link ?? null;
+    if (!name || !link) {
+      skippedMissing.push(item);
+      continue;
+    }
+    if (existingNames.has(name)) {
+      // skip already present
+      continue;
+    }
+    const priceNumeric = parsePrice(item.price);
+    const image_url = item.image ?? null;
+    toInsert.push({ name, priceNumeric, link, image_url });
+  }
+
+  if (skippedMissing.length) {
+    console.warn(
+      `Skipping ${skippedMissing.length} items missing name or link.`
+    );
+  }
+
+  if (toInsert.length === 0) {
+    console.log("Nothing to import — all items already exist or were invalid.");
+    process.exit(0);
+  }
+
+  console.log(
+    `Inserting ${toInsert.length} new items (individual INSERTs with retries)...`
+  );
+
+  let inserted = 0;
+
+  try {
+    // Insert each row individually — simpler and avoids dependency on helper methods like sql.join
+    for (const it of toInsert) {
+      await retryAsync(
+        () =>
+          sql`
+          INSERT INTO gibbo
+            (name, type, category, price, description, store, parish, on_deal, old_price, image_url, link, created_at)
+          VALUES
+            (${it.name}, ${"grocery"}, ${"uncategorized"}, ${
+            it.priceNumeric
+          }, ${null}, ${"Gibbo"}, ${null}, ${false}, ${null}, ${
+            it.image_url
+          }, ${it.link}, CURRENT_DATE)
+        `
+      );
+
+      inserted++;
+      if (inserted % INSERT_BATCH_SIZE === 0) {
+        console.log(`Inserted ${inserted}/${toInsert.length}...`);
+      }
     }
 
-    console.log(`Processed ${processed} rows.`);
-    console.log("Import complete.");
+    console.log(`Import complete. Inserted ${inserted} new rows.`);
   } catch (err) {
-    console.error("Import failed:", err);
+    console.error("Insert failed:", err.message || err);
     process.exit(1);
   }
 }
