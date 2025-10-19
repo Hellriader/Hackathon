@@ -1,4 +1,4 @@
-VIDEO DEMO LINK: [https://github.com/Hellriader/Hackathon/tree/final](https://youtube.com/shorts/N9fLBmyjGsM?si=P4t-OqH5C3v167NF)
+VIDEO DEMO LINK: https://youtube.com/shorts/N9fLBmyjGsM?si=P4t-OqH5C3v167NF
 
 # Welcome to your Expo app 👋
 
