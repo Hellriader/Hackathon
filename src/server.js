@@ -143,6 +143,7 @@ const prompt = [
     "Your task: Convert user requests in natural language into accurate SQL queries. " +
     "The SQL must combine all four tables when necessary, to find the item across all tables and compare their prices. " +
     "Always return results sorted by price ascending so the cheapest option is first. " +
+    "Always return the first 5 results unless otherwise stated by the user " +
     "Do not include <code> or the word 'sql' in your output.\n\n" +
     "Here are examples of how to respond:\n\n" +
     // === BASIC QUERIES ===
